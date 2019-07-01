@@ -1,10 +1,10 @@
-# import sys
-# sys.path.append('..')
+import sys
+sys.path.append('..')
 
 
 from os.path import join
 
-from tadpole.io import load_tadpole_data, write_submission_table
+from tadpole.io_tp import load_tadpole_data, write_submission_table
 from tadpole.validation import get_test_subjects
 from tadpole.submission import create_submission_table
 from tadpole.models.simple import create_prediction
