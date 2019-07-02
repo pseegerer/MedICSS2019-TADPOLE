@@ -40,13 +40,13 @@ lb2_subjects = get_test_subjects(LB_table)
 #     subj_forecast = create_prediction(subj_data, subj_targets, subj_forecast)
 #
 #     submission.append(subj_forecast)
-rids = list()
 data_grouped = LB_table.groupby("RID")
 targets_grouped = LB_targets.groupby("RID")
 
-# batch_forecast = create_submission_table(rids, n_forecasts)
-batch_forecast = create_prediction_batch(LB_table, LB_targets, None)
+rids = list(data_grouped.groups.keys())
+batch_forecast = create_submission_table(rids, n_forecasts)
+batch_forecast = create_prediction_batch(LB_table, LB_targets, batch_forecast)
 
 ## Now construct the forecast spreadsheet and output it.
 print('Constructing the output spreadsheet {0} ...'.format(output_file))
-write_submission_table(submission, output_file)
+write_submission_table(batch_forecast, output_file)

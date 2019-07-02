@@ -14,7 +14,7 @@ from tadpole.models.linear_regression import create_prediction
 # Change if necessary.
 dataLocationLB1LB2 = '../data/'  # current directory
 
-tadpoleLB1LB2_file = join(dataLocationLB1LB2, 'TADPOLE_LB1_LB2.csv')
+tadpoleLB1LB2_file = join(dataLocationLB1LB2, 'TADPOLE_LB1_LB2_dev.csv')
 output_file = '../data/TADPOLE_Submission_SummerSchool2018_TeamName1.csv'
 
 print('Loading data ...')

@@ -42,6 +42,12 @@ def predict_adas13(data_forecast, most_recent_data, features_list):
     # typical score of 12 with wide confidence interval +/-10.
 
 
+def predict_gp(x, gp, mean_regressor):
+    # Predict GP and add dataset mean
+    prediction, std = gp.predict(x, return_std=True) + mean_regressor.predict(x)
+    return prediction, std
+
+
 def predict_ventricles(data_forecast, most_recent_data, features_list):
     # * Ventricles volume forecast: = most recent measurement, default confidence interval
     most_recent_Ventricles_ICV = most_recent_data['Ventricles_ICV'].dropna().tail(1).iloc[0]
@@ -79,19 +85,28 @@ def predict_ventricles(data_forecast, most_recent_data, features_list):
         # Subtract the dataset mean
         gp.fit(x.reshape((-1, 1)), y - mean_regressor.predict(x.reshape((-1, 1))))
 
-        plt.figure()
-        xx = np.linspace(x_min, x_max, n_forecast, 100)
-        ygp = gp.predict(xx.reshape((-1, 1))) + mean_regressor.predict(xx.reshape((-1, 1))) # TODO for now it's the mean, can also return confidence
-        plt.plot(xx, ygp, "r")
-        plt.scatter(x, y, c="b")
-        plt.title(f"Subject {rid}")
-        plt.show()
 
-    vent_prediction = vent_p(most_recent_data['AGE_AT_EXAM'].dropna().iloc[-1] + data_forecast['Forecast Month'] / 12)
+        # Get future time points
+        dates_forecast = x[-1] + data_forecast[data_forecast["RID"] == rid]["Forecast Month"] / 12
+        # TODO reshape should be generic
+        vent_forecast, std = predict_gp(dates_forecast.values.reshape((-1, 1)), gp, mean_regressor)
 
-    data_forecast.loc[:, 'Ventricles_ICV'] = vent_prediction
-    data_forecast.loc[:, 'Ventricles_ICV 50% CI lower'] = np.maximum(0, vent_prediction - 0.01 * vent_prediction)
-    data_forecast.loc[:, 'Ventricles_ICV 50% CI upper'] = np.minimum(1, vent_prediction + 0.01 * vent_prediction)
+        # TODO what index does it have?
+        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV'] = vent_forecast
+
+        # 50% CI. Phi(50%) = 0.75 -> 50% of the data lie within 0.75 * sigma around the mean
+        data_forecast.loc[rid, 'Ventricles_ICV 50% CI lower'] = vent_forecast - 0.75 * std
+        data_forecast.loc[rid, 'Ventricles_ICV 50% CI upper'] = vent_forecast + 0.75 * std
+
+        # Plot for 1D regression
+        # plt.figure()
+        # xx = np.linspace(x_min, x_max, n_forecast, 100)
+        # ygp = gp.predict(xx.reshape((-1, 1))) + mean_regressor.predict(xx.reshape((-1, 1))) # TODO for now it's the mean, can also return confidence
+        # plt.plot(xx, ygp, "r")
+        # plt.scatter(x, y, c="b")
+        # plt.scatter(date_forecast, vent_forecast, c="g")
+        # plt.title(f"Subject {rid}")
+        # plt.show()
 
 
 def create_prediction_batch(train_data, train_targets, data_forecast):
