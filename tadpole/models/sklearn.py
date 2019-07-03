@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 
 from sklearn.linear_model import LinearRegression
 from sklearn.gaussian_process import GaussianProcessRegressor as GP
+from sklearn.ensemble import RandomForestRegressor
 
 
 def predict_diagnosis(data_forecast, most_recent_data):
@@ -48,7 +49,7 @@ def predict_gp(x, gp, mean_regressor):
     return prediction, std
 
 
-def predict_ventricles(data_forecast, most_recent_data, features_list):
+def predict_ventricles(data_forecast, most_recent_data):
     # * Ventricles volume forecast: = most recent measurement, default confidence interval
     most_recent_Ventricles_ICV = most_recent_data['Ventricles_ICV'].dropna().tail(1).iloc[0]
 
@@ -58,34 +59,58 @@ def predict_ventricles(data_forecast, most_recent_data, features_list):
     y = most_recent_data['Ventricles_ICV'].dropna()[vent_mask]
 
     # Regress the joint mean
-    x = x.values.reshape((-1, 1))
-    mean_regressor = LinearRegression()
-    mean_regressor.fit(x, y)
-
-    plt.figure()
-    plt.scatter(x, y, c="b")
-    x_min = x.min()
-    x_max = x.max()
-    plt.plot([x_min, x_max], [mean_regressor.predict(x_min.reshape((1, 1))), mean_regressor.predict(x_max.reshape((1, 1)))], "r",
-             label="mean")
-    plt.legend()
-    plt.show()
+    # x = x.values.reshape((-1, 1))
+    # mean_regressor = LinearRegression()
+    # mean_regressor.fit(x, y)
+    #
+    # plt.figure()
+    # plt.scatter(x, y, c="b")
+    # x_min = x.min()
+    # x_max = x.max()
+    # plt.plot([x_min, x_max], [mean_regressor.predict(x_min.reshape((1, 1))), mean_regressor.predict(x_max.reshape((1, 1)))], "r",
+    #          label="mean")
+    # plt.legend()
+    # plt.show()
 
     # Regress the individual subjects
     # Normalize the targets: how much does it deviate from the mean at this age?
     data_grouped = most_recent_data.dropna()[vent_mask].groupby("RID")
 
-    n_forecast = 7 * 12
-    for rid, subject in data_grouped:
-        x = subject['AGE_AT_EXAM']
+    # Go through all the subjects and build up huge feature matrix
+    features = list()
+    targets = list()
+    for ctr, (rid, subject) in enumerate(data_grouped):
+        x = subject[["Entorhinal", "Fusiform", "MidTemp"]]
+        num_measurements = len(x)
+        if num_measurements < 2:
+            print(f"Skipping {rid}")
+            continue
+        t = subject["AGE_AT_EXAM"].values
+        vs = subject["Ventricles_ICV"].values
         y = subject['Ventricles_ICV']
 
-        gp = GP()
-        x = x.values
-        # Subtract the dataset mean
-        gp.fit(x.reshape((-1, 1)), y - mean_regressor.predict(x.reshape((-1, 1))))
+        xx = x.values
 
+        # Build up the feature vectors: x1 + (t' - t1) (+ is concat)
+        # Target is v' - v1
+        # Bigrams: x1 + x2 + (t2 - t1) + (t' - t1) + (v2 - v1)
+        features_subject = list()
+        targets_subject = list()
+        for i in range(num_measurements):
+            for j in range(i + 1, num_measurements):
+                f = np.array((list(xx[i]) + [(t[j] - t[i])]))
+                target = vs[j] - vs[i]
+                features_subject.append(f)
+                targets_subject.append(target)
+        features_subject = np.stack(features_subject)
+        features.append(features_subject)
+        targets.extend(targets_subject)
+    features = np.vstack(features)
 
+    reg = RandomForestRegressor()
+    reg.fit(features, targets)
+
+    def predict_():
         # Get future time points
         dates_forecast = x[-1] + data_forecast[data_forecast["RID"] == rid]["Forecast Month"] / 12
         # TODO reshape should be generic
@@ -123,15 +148,16 @@ def create_prediction_batch(train_data, train_targets, data_forecast):
     :rtype: pd.DataFrame
     """
     # * Clinical status forecast: predefined likelihoods per current status
-    most_recent_data = pd.concat((train_targets, train_data[['EXAMDATE', 'AGE_AT_EXAM']]), axis=1).sort_values(by='EXAMDATE')
+
+    # List of features that are used for prediction
+    features_list = ["Hippocampus", "Entorhinal", "Fusiform", "MidTemp", "WholeBrain"]
+    most_recent_data = pd.concat((train_targets, train_data[['EXAMDATE', 'AGE_AT_EXAM'] + features_list]), axis=1).sort_values(by='EXAMDATE')
     most_recent_CLIN_STAT = most_recent_data['CLIN_STAT'].dropna().tail(1).iloc[0]
 
 
-    # List of features that are used for prediction
-    features_list = ["Ventricles", "Hippocampus", "Entorhinal", "Fusiform", "MidTemp", "WholeBrain"]
 
     # predict_diagnosis(data_forecast, most_recent_data)
     # predict_adas13(data_forecast, most_recent_data)
-    predict_ventricles(data_forecast, most_recent_data, features_list)
+    predict_ventricles(data_forecast, most_recent_data)
 
     return data_forecast
