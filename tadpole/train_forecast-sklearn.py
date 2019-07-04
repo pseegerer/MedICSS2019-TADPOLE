@@ -15,7 +15,7 @@ from tadpole.models.sklearn import create_prediction_batch
 dataLocationLB1LB2 = '../data/'  # current directory
 
 # TODO dev
-tadpoleLB1LB2_file = join(dataLocationLB1LB2, 'TADPOLE_LB1_LB2.csv')
+tadpoleLB1LB2_file = join(dataLocationLB1LB2, 'TADPOLE_LB1_LB2_dev.csv')
 output_file = '../data/TADPOLE_Submission_SummerSchool2018_TeamName1.csv'
 
 print('Loading data ...')

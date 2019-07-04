@@ -7,6 +7,8 @@ from sklearn.gaussian_process import GaussianProcessRegressor as GP
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import GridSearchCV
 
+from statsmodels.regression.mixed_linear_model import MixedLM
+
 def predict_diagnosis(data_forecast, most_recent_data):
     if most_recent_CLIN_STAT == 'NL':
         CNp, MCIp, ADp = 0.3, 0.4, 0.3
@@ -49,7 +51,7 @@ def predict_gp(x, gp, mean_regressor):
     return prediction, std
 
 
-def predict_ventricles(data_forecast, most_recent_data):
+def predict_ventricles(data_forecast, most_recent_data, feature_list):
     # * Ventricles volume forecast: = most recent measurement, default confidence interval
     most_recent_Ventricles_ICV = most_recent_data['Ventricles_ICV'].dropna().tail(1).iloc[0]
 
@@ -77,50 +79,59 @@ def predict_ventricles(data_forecast, most_recent_data):
     data_grouped = most_recent_data.dropna()[vent_mask].groupby("RID")
 
     # Go through all the subjects and build up huge feature matrix
-    features = list()
-    targets = list()
+    fixed_effects = list()
+    random_effects = list()
     groups = list()
+    ys = list()
     for ctr, (rid, subject) in enumerate(data_grouped):
-        x = subject[["Entorhinal", "Fusiform", "MidTemp"]]
-        num_measurements = len(x)
+        x = subject.iloc[0][feature_list]  # TODO take the baseline features
+        num_measurements = len(subject)
+        # TODO
         if num_measurements < 2:
             print(f"Skipping {rid}")
             continue
-        t = subject["AGE_AT_EXAM"].values
-        vs = subject["Ventricles_ICV"].values
+
+        t_bl = subject["AGE_AT_EXAM"].min()
+        t = subject["AGE_AT_EXAM"] - t_bl
         y = subject['Ventricles_ICV']
+        fixed_effect = pd.DataFrame(t)
+        fixed_effect["t_bl"] = t_bl
+        fixed_effect = pd.concat([fixed_effect, pd.DataFrame([x] * len(fixed_effect), index=fixed_effect.index)], axis=1, join="inner")
 
-        xx = x.values
+        fixed_effects.append(fixed_effect)
+        random_effects.append(t)
+        groups.extend(num_measurements * [rid])
+        ys.append(y)
 
-        # Build up the feature vectors: x1 + (t' - t1) (+ is concat)
-        # Target is v' - v1
-        # Bigrams: x1 + x2 + (t2 - t1) + (t' - t1) + (v2 - v1)
-        features_subject = list()
-        targets_subject = list()
-        for i in range(num_measurements):
-            for j in range(i + 1, num_measurements):
-                f = np.array((list(xx[i]) + [(t[j] - t[i])]))
-                target = vs[j] - vs[i]
-                features_subject.append(f)
-                targets_subject.append(target)
-                groups.append(rid)
-        features_subject = np.stack(features_subject)
-        features.append(features_subject)
-        targets.extend(targets_subject)
-    features = np.vstack(features)
+    fixed_effects = pd.concat(fixed_effects, axis=0)
+    random_effects = pd.concat(random_effects, axis=0)
+    fixed_effects["intercept"] = 1
+    random_effects["intercept"] = 1
 
-    reg = RandomForestRegressor(n_jobs=3)
-    param_grid = {"max_depth": [None, 4, 32], "n_estimators": [10, 100, 1000]}
-    grid_search = GridSearchCV(reg, param_grid)
-    grid_search.fit(features, y=targets, groups=groups)
-    best_estimator = grid_search.best_estimator_
-    print(pd.DataFrame(grid_search.cv_results_)[["mean_test_score", "mean_train_score"]])
+    ys = pd.concat(ys, axis=0)
 
-    def predict_():
+    model = MixedLM(ys, fixed_effects, groups, exog_re=random_effects)
+    result = model.fit()
+    print(result.summary())
+
+    def predict_lme(result, rid, year, test_subject):
+        fe_params = result.fe_params.values
+        re_params = result.random_effects[rid].values
+        # test_subject = pd.concat(len(year) * [pd.DataFrame(test_subject).T], axis=0)
+        test_subject["AGE_AT_EXAM"] = year
+        prediction = test_subject @ fe_params + np.array([year]) @ re_params
+        return prediction
+
+    # test_subject = fixed_effects.iloc[0]
+    # predict_lme(result, 3, 3, test_subject)
+
+    for x in subjects_bl:
+        t_bl = None
+        test_subject = None
         # Get future time points
-        dates_forecast = x[-1] + data_forecast[data_forecast["RID"] == rid]["Forecast Month"] / 12
+        dates_forecast = t_bl + data_forecast[data_forecast["RID"] == rid]["Forecast Month"] / 12
         # TODO reshape should be generic
-        vent_forecast, std = predict_gp(dates_forecast.values.reshape((-1, 1)), gp, mean_regressor)
+        vent_forecast, std = predict_lme(result, rid, dates_forecast, test_subject)
 
         # TODO what index does it have?
         data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV'] = vent_forecast
@@ -156,7 +167,7 @@ def create_prediction_batch(train_data, train_targets, data_forecast):
     # * Clinical status forecast: predefined likelihoods per current status
 
     # List of features that are used for prediction
-    features_list = ["Hippocampus", "Entorhinal", "Fusiform", "MidTemp", "WholeBrain"]
+    features_list = ["Hippocampus_bl", "Entorhinal_bl", "Fusiform_bl", "MidTemp_bl", "WholeBrain_bl"]
     most_recent_data = pd.concat((train_targets, train_data[['EXAMDATE', 'AGE_AT_EXAM'] + features_list]), axis=1).sort_values(by='EXAMDATE')
     most_recent_CLIN_STAT = most_recent_data['CLIN_STAT'].dropna().tail(1).iloc[0]
 
@@ -164,6 +175,6 @@ def create_prediction_batch(train_data, train_targets, data_forecast):
 
     # predict_diagnosis(data_forecast, most_recent_data)
     # predict_adas13(data_forecast, most_recent_data)
-    predict_ventricles(data_forecast, most_recent_data)
+    predict_ventricles(data_forecast, most_recent_data, features_list)
 
     return data_forecast
