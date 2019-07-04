@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from sklearn.gaussian_process import GaussianProcessRegressor as GP
 from sklearn.ensemble import RandomForestRegressor
-
+from sklearn.model_selection import GridSearchCV
 
 def predict_diagnosis(data_forecast, most_recent_data):
     if most_recent_CLIN_STAT == 'NL':
@@ -79,6 +79,7 @@ def predict_ventricles(data_forecast, most_recent_data):
     # Go through all the subjects and build up huge feature matrix
     features = list()
     targets = list()
+    groups = list()
     for ctr, (rid, subject) in enumerate(data_grouped):
         x = subject[["Entorhinal", "Fusiform", "MidTemp"]]
         num_measurements = len(x)
@@ -102,13 +103,18 @@ def predict_ventricles(data_forecast, most_recent_data):
                 target = vs[j] - vs[i]
                 features_subject.append(f)
                 targets_subject.append(target)
+                groups.append(rid)
         features_subject = np.stack(features_subject)
         features.append(features_subject)
         targets.extend(targets_subject)
     features = np.vstack(features)
 
-    reg = RandomForestRegressor()
-    reg.fit(features, targets)
+    reg = RandomForestRegressor(n_jobs=3)
+    param_grid = {"max_depth": [None, 4, 32], "n_estimators": [10, 100, 1000]}
+    grid_search = GridSearchCV(reg, param_grid)
+    grid_search.fit(features, y=targets, groups=groups)
+    best_estimator = grid_search.best_estimator_
+    print(pd.DataFrame(grid_search.cv_results_)[["mean_test_score", "mean_train_score"]])
 
     def predict_():
         # Get future time points
