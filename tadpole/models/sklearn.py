@@ -73,8 +73,9 @@ def get_mixed_effects(subject, feature_list):
 def predict_lme(result, rid, year, test_subject):
     fe_params = result.fe_params.values
     re_params = result.random_effects[rid].values
-    test_subject["AGE_AT_EXAM"] = year
-    prediction = test_subject @ fe_params + np.array([year]) @ re_params
+    test_subject = pd.concat(len(year) * [test_subject.T], axis=1).T  # Expand to have row for each year
+    test_subject.loc[:, "AGE_AT_EXAM"] = np.array(year)
+    prediction = test_subject @ fe_params + np.array(year) * re_params
     return prediction
 
 
@@ -116,21 +117,21 @@ def predict_ventricles(data_forecast, most_recent_data, feature_list):
     print(result.summary())
 
     for rid, test_subject in tqdm.tqdm(data_grouped):
-        t_bl = test_subject["AGE_AT_EXAM"].min()
+        t_last = test_subject["AGE_AT_EXAM"].max() - test_subject["AGE_AT_EXAM"].min()
         fixed_effect, _, _ = get_mixed_effects(test_subject, feature_list)
-        # Get future time points
-        dates_forecast = t_bl + data_forecast[data_forecast["RID"] == rid]["Forecast Month"] / 12
+        # Get future time points (after last visit)
+        dates_forecast = t_last + data_forecast[data_forecast["RID"] == rid]["Forecast Month"] / 12
 
         # TODO reshape should be generic
         vent_forecasts = list()
         vent_std = list()
         std = 0.01
-        for date_forecast in dates_forecast:
-            vent_forecasts.append(predict_lme(result, rid, date_forecast, fixed_effect.iloc[0]))
-            vent_std.append(std)  # TODO
+        # for date_forecast in dates_forecast:
+        vent_forecasts = predict_lme(result, rid, dates_forecast, fixed_effect.iloc[0])
+        vent_std = std  # TODO
 
         # TODO what index does it have?
-        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV'] = vent_forecasts
+        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV'] = np.array(vent_forecasts)
 
         # 50% CI. Phi(50%) = 0.75 -> 50% of the data lie within 0.75 * sigma around the mean
         data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV 50% CI lower'] = np.array(vent_forecasts) - 0.75 * std

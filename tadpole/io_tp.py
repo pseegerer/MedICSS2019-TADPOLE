@@ -76,6 +76,6 @@ def write_submission_table(submission, output_file):
     :rtype: list of pd.DataFrame
     :param outputFile: Path to output file
     """
-    submission_table = pd.concat(submission, axis=0)
+    submission_table = pd.concat(submission, axis=0) if type(submission) == list() else submission
     submission_table['Forecast Date'] = submission_table['Forecast Date'].apply(lambda d: d.strftime('%Y-%m'))
     submission_table.to_csv(output_file, index=False)
