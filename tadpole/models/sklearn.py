@@ -125,17 +125,23 @@ def predict_ventricles(data_forecast, most_recent_data, feature_list):
         # TODO reshape should be generic
         vent_forecasts = list()
         vent_std = list()
-        std = 0.01
+        std = 0.02
         # for date_forecast in dates_forecast:
         vent_forecasts = predict_lme(result, rid, dates_forecast, fixed_effect.iloc[0])
         vent_std = std  # TODO
 
-        # TODO what index does it have?
-        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV'] = np.array(vent_forecasts)
+        # Postprocessing
+        vent_forecasts = np.array(vent_forecasts)
+        min_v = 0.9 * most_recent_data["Ventricles_ICV"].min()
+        max_v = 2 * most_recent_data["Ventricles_ICV"].max()
+        vent_forecasts = np.maximum(vent_forecasts, min_v)
+        vent_forecasts = np.minimum(vent_forecasts, max_v)
+
+        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV'] = vent_forecasts
 
         # 50% CI. Phi(50%) = 0.75 -> 50% of the data lie within 0.75 * sigma around the mean
-        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV 50% CI lower'] = np.array(vent_forecasts) - 0.75 * std
-        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV 50% CI upper'] = np.array(vent_forecasts) + 0.75 * std
+        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV 50% CI lower'] = np.max(np.array(vent_forecasts) - 0.75 * std, 0)
+        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV 50% CI upper'] = np.max(np.array(vent_forecasts) + 0.75 * std, 0)
     return data_forecast
 
 
@@ -156,14 +162,16 @@ def create_prediction_batch(train_data, train_targets, data_forecast):
     # * Clinical status forecast: predefined likelihoods per current status
 
     # List of features that are used for prediction
-    features_list = ["Hippocampus_bl", "Entorhinal_bl", "Fusiform_bl", "MidTemp_bl", "WholeBrain_bl"]
-    most_recent_data = pd.concat((train_targets, train_data[['EXAMDATE', 'AGE_AT_EXAM'] + features_list]), axis=1).sort_values(by='EXAMDATE')
+    feature_list1 = ["Hippocampus_bl", "Entorhinal_bl", "Fusiform_bl", "MidTemp_bl", "WholeBrain_bl"]
+    features_list2 = ["MMSE", "RAVLT_immediate", "ADAS13", "FAQ", "CDRSB"]
+    feature_list = feature_list1 #+ features_list2
+    most_recent_data = pd.concat((train_targets, train_data[['EXAMDATE', 'AGE_AT_EXAM'] + feature_list]), axis=1).sort_values(by='EXAMDATE')
     most_recent_CLIN_STAT = most_recent_data['CLIN_STAT'].dropna().tail(1).iloc[0]
 
 
 
     # predict_diagnosis(data_forecast, most_recent_data)
     # predict_adas13(data_forecast, most_recent_data)
-    data_forecast = predict_ventricles(data_forecast, most_recent_data, features_list)
+    data_forecast = predict_ventricles(data_forecast, most_recent_data, feature_list)
 
     return data_forecast
