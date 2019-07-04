@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import tqdm
 
 from sklearn.linear_model import LinearRegression
 from sklearn.gaussian_process import GaussianProcessRegressor as GP
@@ -51,28 +52,40 @@ def predict_gp(x, gp, mean_regressor):
     return prediction, std
 
 
+def get_mixed_effects(subject, feature_list):
+    baseline_features = subject.iloc[0][feature_list]
+    t_bl = subject["AGE_AT_EXAM"].min()
+    t = subject["AGE_AT_EXAM"] - t_bl
+    y = subject['Ventricles_ICV']
+    fixed_effect = pd.DataFrame(t)
+    fixed_effect["t_bl"] = t_bl
+    fixed_effect = pd.concat([fixed_effect, pd.DataFrame([baseline_features] * len(fixed_effect), index=fixed_effect.index)], axis=1,
+                             join="inner")
+    random_effect = t
+
+    # Add intercept
+    fixed_effect["intercept"] = 1.0
+    random_effect["intercept"] = 1.0
+
+    return fixed_effect, random_effect, y
+
+
+def predict_lme(result, rid, year, test_subject):
+    fe_params = result.fe_params.values
+    re_params = result.random_effects[rid].values
+    test_subject["AGE_AT_EXAM"] = year
+    prediction = test_subject @ fe_params + np.array([year]) @ re_params
+    return prediction
+
+
 def predict_ventricles(data_forecast, most_recent_data, feature_list):
     # * Ventricles volume forecast: = most recent measurement, default confidence interval
     most_recent_Ventricles_ICV = most_recent_data['Ventricles_ICV'].dropna().tail(1).iloc[0]
 
     vent_mask = (most_recent_data['Ventricles_ICV'].dropna() > 0) & (
                 most_recent_data['AGE_AT_EXAM'].dropna() > 0)  # not missing: Ventricles and ICV
-    x = most_recent_data['AGE_AT_EXAM'].dropna()[vent_mask]
+    test_subject = most_recent_data['AGE_AT_EXAM'].dropna()[vent_mask]
     y = most_recent_data['Ventricles_ICV'].dropna()[vent_mask]
-
-    # Regress the joint mean
-    # x = x.values.reshape((-1, 1))
-    # mean_regressor = LinearRegression()
-    # mean_regressor.fit(x, y)
-    #
-    # plt.figure()
-    # plt.scatter(x, y, c="b")
-    # x_min = x.min()
-    # x_max = x.max()
-    # plt.plot([x_min, x_max], [mean_regressor.predict(x_min.reshape((1, 1))), mean_regressor.predict(x_max.reshape((1, 1)))], "r",
-    #          label="mean")
-    # plt.legend()
-    # plt.show()
 
     # Regress the individual subjects
     # Normalize the targets: how much does it deviate from the mean at this age?
@@ -84,29 +97,17 @@ def predict_ventricles(data_forecast, most_recent_data, feature_list):
     groups = list()
     ys = list()
     for ctr, (rid, subject) in enumerate(data_grouped):
-        x = subject.iloc[0][feature_list]  # TODO take the baseline features
         num_measurements = len(subject)
-        # TODO
-        if num_measurements < 2:
-            print(f"Skipping {rid}")
-            continue
 
-        t_bl = subject["AGE_AT_EXAM"].min()
-        t = subject["AGE_AT_EXAM"] - t_bl
-        y = subject['Ventricles_ICV']
-        fixed_effect = pd.DataFrame(t)
-        fixed_effect["t_bl"] = t_bl
-        fixed_effect = pd.concat([fixed_effect, pd.DataFrame([x] * len(fixed_effect), index=fixed_effect.index)], axis=1, join="inner")
+        fixed_effect, random_effect, y = get_mixed_effects(subject, feature_list)
 
         fixed_effects.append(fixed_effect)
-        random_effects.append(t)
+        random_effects.append(random_effect)
         groups.extend(num_measurements * [rid])
         ys.append(y)
 
     fixed_effects = pd.concat(fixed_effects, axis=0)
     random_effects = pd.concat(random_effects, axis=0)
-    fixed_effects["intercept"] = 1
-    random_effects["intercept"] = 1
 
     ys = pd.concat(ys, axis=0)
 
@@ -114,41 +115,28 @@ def predict_ventricles(data_forecast, most_recent_data, feature_list):
     result = model.fit()
     print(result.summary())
 
-    def predict_lme(result, rid, year, test_subject):
-        fe_params = result.fe_params.values
-        re_params = result.random_effects[rid].values
-        # test_subject = pd.concat(len(year) * [pd.DataFrame(test_subject).T], axis=0)
-        test_subject["AGE_AT_EXAM"] = year
-        prediction = test_subject @ fe_params + np.array([year]) @ re_params
-        return prediction
-
-    # test_subject = fixed_effects.iloc[0]
-    # predict_lme(result, 3, 3, test_subject)
-
-    for x in subjects_bl:
-        t_bl = None
-        test_subject = None
+    for rid, test_subject in tqdm.tqdm(data_grouped):
+        t_bl = test_subject["AGE_AT_EXAM"].min()
+        fixed_effect, _, _ = get_mixed_effects(test_subject, feature_list)
         # Get future time points
         dates_forecast = t_bl + data_forecast[data_forecast["RID"] == rid]["Forecast Month"] / 12
+
         # TODO reshape should be generic
-        vent_forecast, std = predict_lme(result, rid, dates_forecast, test_subject)
+        vent_forecasts = list()
+        vent_std = list()
+        std = 0.01
+        for date_forecast in dates_forecast:
+            vent_forecasts.append(predict_lme(result, rid, date_forecast, fixed_effect.iloc[0]))
+            vent_std.append(std)  # TODO
 
         # TODO what index does it have?
-        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV'] = vent_forecast
+        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV'] = vent_forecasts
 
         # 50% CI. Phi(50%) = 0.75 -> 50% of the data lie within 0.75 * sigma around the mean
-        data_forecast.loc[rid, 'Ventricles_ICV 50% CI lower'] = vent_forecast - 0.75 * std
-        data_forecast.loc[rid, 'Ventricles_ICV 50% CI upper'] = vent_forecast + 0.75 * std
+        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV 50% CI lower'] = np.array(vent_forecasts) - 0.75 * std
+        data_forecast.loc[data_forecast["RID"] == rid, 'Ventricles_ICV 50% CI upper'] = np.array(vent_forecasts) + 0.75 * std
+    return data_forecast
 
-        # Plot for 1D regression
-        # plt.figure()
-        # xx = np.linspace(x_min, x_max, n_forecast, 100)
-        # ygp = gp.predict(xx.reshape((-1, 1))) + mean_regressor.predict(xx.reshape((-1, 1))) # TODO for now it's the mean, can also return confidence
-        # plt.plot(xx, ygp, "r")
-        # plt.scatter(x, y, c="b")
-        # plt.scatter(date_forecast, vent_forecast, c="g")
-        # plt.title(f"Subject {rid}")
-        # plt.show()
 
 
 def create_prediction_batch(train_data, train_targets, data_forecast):
@@ -175,6 +163,6 @@ def create_prediction_batch(train_data, train_targets, data_forecast):
 
     # predict_diagnosis(data_forecast, most_recent_data)
     # predict_adas13(data_forecast, most_recent_data)
-    predict_ventricles(data_forecast, most_recent_data, features_list)
+    data_forecast = predict_ventricles(data_forecast, most_recent_data, features_list)
 
     return data_forecast
