@@ -16,7 +16,7 @@ dataLocationLB1LB2 = '../data/'  # current directory
 
 # TODO dev
 tadpoleLB1LB2_file = join(dataLocationLB1LB2, 'TADPOLE_LB1_LB2.csv')
-output_file = '../data/TADPOLE_Submission_SummerSchool2018_TeamName1.csv'
+output_file = '../data/TADPOLE_Submission_SummerSchool2018_MixedFeeling3.csv'
 
 print('Loading data ...')
 LB_table, LB_targets = load_tadpole_data(tadpoleLB1LB2_file)

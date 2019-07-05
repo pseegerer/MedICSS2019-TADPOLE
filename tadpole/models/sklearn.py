@@ -162,9 +162,9 @@ def create_prediction_batch(train_data, train_targets, data_forecast):
     # * Clinical status forecast: predefined likelihoods per current status
 
     # List of features that are used for prediction
-    feature_list1 = ["Hippocampus_bl", "Entorhinal_bl", "Fusiform_bl", "MidTemp_bl", "WholeBrain_bl"]
+    feature_list1 = ["Hippocampus_bl", "Entorhinal_bl", "Fusiform_bl", "MidTemp_bl", "WholeBrain_bl", "Ventricles_ICV", "CLIN_STAT"]
     features_list2 = ["MMSE", "RAVLT_immediate", "ADAS13", "FAQ", "CDRSB"]
-    feature_list = feature_list1 #+ features_list2
+    feature_list = feature_list1 + features_list2
     most_recent_data = pd.concat((train_targets, train_data[['EXAMDATE', 'AGE_AT_EXAM'] + feature_list]), axis=1).sort_values(by='EXAMDATE')
     most_recent_CLIN_STAT = most_recent_data['CLIN_STAT'].dropna().tail(1).iloc[0]
 

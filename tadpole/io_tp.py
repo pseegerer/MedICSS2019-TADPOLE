@@ -59,7 +59,7 @@ def load_tadpole_data(filename):
 
     target_variables.extend(['Ventricles_ICV', 'CLIN_STAT'])
     y = LB_table.loc[:, ['RID'] + target_variables]
-    X = LB_table.drop(target_variables, axis=1)
+    X = LB_table#.drop(target_variables, axis=1)
 
     age = get_age_at_exam(X)
     # need to match multi-index
